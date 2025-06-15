@@ -33,6 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     //var window: NSWindow!
     var statusBarItem: NSStatusItem!
     var popover: NSPopover!
+    var calibrationStage:Int = 0
+    var savedChargeValue:UInt8 = 0
     
     func applicationWillTerminate(_ aNotification: Notification) {
         Helper.instance.enableSleep()
@@ -68,9 +70,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         LaunchAtLogin.isEnabled = true
         SMCPresenter.shared.loadValue()
-        
+
         Helper.instance.checkCharging()
-        
+
+        if(PersistanceManager.instance.calibrationDue()){
+            calibrationStage = 1
+            savedChargeValue = SMCPresenter.shared.value
+            print("Starting monthly calibration cycle")
+        }
+
         var actionMsg:String?
 
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { timer in
@@ -78,14 +86,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Helper.instance.getChargingInfo { (Name, Capacity, IsCharging, MaxCapacity) in
                     
                     
-                    if(!PersistanceManager.instance.oldKey){
+                    if calibrationStage == 1 {
+                        actionMsg = "CALIBRATION DISCHARGING"
+                        if !Helper.instance.chargeInhibited {
+                            Helper.instance.disableCharging()
+                        }
+                        if Capacity <= 5 {
+                            calibrationStage = 2
+                            SMCPresenter.shared.setValue(value: 100)
+                            Helper.instance.enableCharging()
+                        }
+                    } else if calibrationStage == 2 {
+                        actionMsg = "CALIBRATION CHARGING"
+                        if Helper.instance.chargeInhibited {
+                            Helper.instance.enableCharging()
+                        }
+                        if Capacity >= 100 {
+                            calibrationStage = 0
+                            SMCPresenter.shared.setValue(value: Float(savedChargeValue))
+                            PersistanceManager.instance.lastCalibration = Date()
+                            PersistanceManager.instance.save()
+                        }
+                    } else if(!PersistanceManager.instance.oldKey){
                         if(Capacity < SMCPresenter.shared.value){
                             actionMsg = "NEED TO CHARGE"
                             if(Helper.instance.chargeInhibited){
                                 Helper.instance.enableCharging()
                             }
                             Helper.instance.disableSleep()
- 
+
                         }
                         else{
                             actionMsg = "IS PERFECT"
@@ -93,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 Helper.instance.disableCharging()
                             }
                             Helper.instance.enableSleep()
-                            
+
                         }
                         print("TARGET: ",SMCPresenter.shared.value,
                               " CURRENT: ",String(Capacity),
